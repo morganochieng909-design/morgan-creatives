@@ -1,0 +1,62 @@
+name: ETTI Radio Live Status
+
+on:
+  schedule:
+    - cron: '*/2 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-live:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Facebook Live status
+        env:
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.parse, urllib.request
+
+          page_id = os.environ.get('FB_PAGE_ID')
+          token = os.environ.get('FB_PAGE_ACCESS_TOKEN')
+          result = {'live': False, 'url': '', 'title': ''}
+
+          if page_id and token:
+              params = urllib.parse.urlencode({
+                  'fields': 'id,permalink_url,title,status',
+                  'access_token': token
+              })
+              url = f'https://graph.facebook.com/v23.0/{page_id}/live_videos?{params}'
+              try:
+                  with urllib.request.urlopen(url, timeout=20) as r:
+                      payload = json.load(r)
+                  for video in payload.get('data', []):
+                      if str(video.get('status','')).upper() in ('LIVE','LIVE_NOW','LIVE_READY'):
+                          result = {
+                              'live': True,
+                              'url': video.get('permalink_url',''),
+                              'title': video.get('title') or 'ETTI Radio Live'
+                          }
+                          break
+              except Exception as e:
+                  print('Facebook API check failed:', e)
+
+          with open('live.json', 'w', encoding='utf-8') as f:
+              json.dump(result, f, indent=2)
+              f.write('\n')
+          PY
+
+      - name: Publish status only when changed
+        run: |
+          git config user.name 'ETTI Radio Bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add live.json
+          git diff --cached --quiet && exit 0
+          git commit -m 'Update ETTI Radio live status'
+          git push
